@@ -1,8 +1,11 @@
 import requests
 from bs4 import BeautifulSoup
+import pandas as pd
 import json
 import numpy as np
 import faiss
+import nest_asyncio
+import asyncio
 
 from sentence_transformers import SentenceTransformer
 
@@ -10,7 +13,9 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from typing import List
 
+from pyngrok import ngrok
 import uvicorn
+from uvicorn import Config, Server # Import Config and Server
 
 
 # =========================================================
@@ -94,6 +99,16 @@ print("Total assessments:", len(all_assessments))
 
 
 # =========================================================
+# SAVE DATASET
+# =========================================================
+
+with open("catalog.json", "w") as f:
+    json.dump(all_assessments, f, indent=4)
+
+print("catalog.json saved")
+
+
+# =========================================================
 # LOAD EMBEDDING MODEL
 # =========================================================
 
@@ -166,18 +181,6 @@ def health():
 
     return {
         "status": "ok"
-    }
-
-
-# =========================================================
-# ROOT ENDPOINT
-# =========================================================
-
-@app.get("/")
-def root():
-
-    return {
-        "message": "SHL Assessment Recommendation API Running"
     }
 
 
@@ -295,11 +298,21 @@ def chat(request: ChatRequest):
 
     messages = request.messages
 
+
+    # =====================================================
+    # FULL CONVERSATION HISTORY
+    # =====================================================
+
     conversation_text = ""
 
     for message in messages:
 
         conversation_text += message.content + " "
+
+
+    # =====================================================
+    # OFF TOPIC REFUSAL
+    # =====================================================
 
     off_topic_words = [
         "law",
@@ -319,6 +332,11 @@ def chat(request: ChatRequest):
                 "end_of_conversation": False
             }
 
+
+    # =====================================================
+    # COMPARISON SUPPORT
+    # =====================================================
+
     comparison_result = compare_assessments(
         conversation_text
     )
@@ -327,6 +345,11 @@ def chat(request: ChatRequest):
 
         return comparison_result
 
+
+    # =====================================================
+    # CLARIFICATION
+    # =====================================================
+
     if is_vague_query(conversation_text):
 
         return {
@@ -334,6 +357,11 @@ def chat(request: ChatRequest):
             "recommendations": [],
             "end_of_conversation": False
         }
+
+
+    # =====================================================
+    # PERSONALITY TEST SUPPORT
+    # =====================================================
 
     personality_words = [
         "personality",
@@ -349,10 +377,20 @@ def chat(request: ChatRequest):
 
             personality_needed = True
 
+
+    # =====================================================
+    # GET RECOMMENDATIONS
+    # =====================================================
+
     recommendations = get_recommendations(
         conversation_text,
         top_k=10
     )
+
+
+    # =====================================================
+    # FILTER EMPTY ITEMS
+    # =====================================================
 
     cleaned = []
 
@@ -362,13 +400,24 @@ def chat(request: ChatRequest):
 
             cleaned.append(item)
 
+
     recommendations = cleaned[:10]
+
+
+    # =====================================================
+    # REPLY TEXT
+    # =====================================================
 
     reply = "Here are recommended SHL assessments."
 
     if personality_needed:
 
         reply += " Personality-related assessments were also considered."
+
+
+    # =====================================================
+    # FINAL RESPONSE
+    # =====================================================
 
     return {
         "reply": reply,
@@ -378,9 +427,45 @@ def chat(request: ChatRequest):
 
 
 # =========================================================
+# ENABLE COLAB FASTAPI
+# =========================================================
+
+nest_asyncio.apply()
+
+
+# =========================================================
+# ADD NGROK TOKEN
+# =========================================================
+
+ngrok.set_auth_token("36mSHpSl4DWk4VZO6zTudKO3Piz_2ReYvKNYAz8zPKgUJRMxH")
+
+
+# =========================================================
+# START NGROK
+# =========================================================
+
+public_url = ngrok.connect(8000)
+
+print("\n")
+print("===================================")
+print("PUBLIC URL:")
+print(public_url)
+print("===================================")
+print("\n")
+
+
+# =========================================================
 # START SERVER
 # =========================================================
 
-if __name__ == "__main__":
+# Create Uvicorn Config
+config = Config(app, host="0.0.0.0", port=8000, loop="asyncio")
 
-    uvicorn.run(app, host="0.0.0.0", port=10000)
+# Create Uvicorn Server
+server = Server(config=config)
+
+# Run the server as an asyncio task
+# This allows it to run in the background without blocking the Colab kernel
+# and avoids the RuntimeError from asyncio.run() being called directly.
+asyncio.create_task(server.serve())
+    
