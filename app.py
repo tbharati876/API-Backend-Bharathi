@@ -12,33 +12,22 @@ from typing import List
 
 import uvicorn
 
-
-
 # FASTAPI APP
-
 
 app = FastAPI(
     title="SHL Assessment Recommendation API",
     version="1.0.0"
 )
 
-
-# =====================================================
-# GLOBAL VARIABLES
-# =====================================================
-
 all_assessments = []
 vectorizer = None
 index = None
 
-
-# =====================================================
 # STARTUP
-# =====================================================
 
 @app.on_event("startup")
 def startup_event():
-
+    
     global all_assessments
     global vectorizer
     global index
@@ -59,9 +48,7 @@ def startup_event():
 
     assessment_links = []
 
-    # =====================================================
-    # COLLECT ONLY VALID ASSESSMENT LINKS
-    # =====================================================
+    # COLLECT ASSESSMENT LINKS
 
     for link in links:
 
@@ -69,11 +56,9 @@ def startup_event():
 
         if href:
 
-            # remove pagination links
             if "product-catalog/?start=" in href:
                 continue
 
-            # keep only product pages
             if "/products/" in href:
 
                 if href.startswith("/"):
@@ -81,7 +66,6 @@ def startup_event():
                 else:
                     full_url = href
 
-                # skip product catalog pages
                 if "product-catalog" in full_url:
                     continue
 
@@ -90,9 +74,7 @@ def startup_event():
 
     print("Valid links found:", len(assessment_links))
 
-    # =====================================================
-    # SCRAPE VALID ASSESSMENTS
-    # =====================================================
+    # SCRAPE ASSESSMENTS
 
     bad_titles = [
         "Find assessments that best meet your needs."
@@ -130,10 +112,6 @@ def startup_event():
                 "description": description
             }
 
-            # =================================================
-            # FILTER BAD ENTRIES
-            # =================================================
-
             if (
                 assessment["name"] != ""
                 and assessment["description"] != ""
@@ -150,9 +128,7 @@ def startup_event():
 
     print("Final assessments:", len(all_assessments))
 
-    # =====================================================
     # TF-IDF VECTORIZER
-    # =====================================================
 
     documents = []
 
@@ -172,9 +148,7 @@ def startup_event():
         embeddings
     ).astype("float32")
 
-    # =====================================================
     # FAISS INDEX
-    # =====================================================
 
     dimension = embeddings.shape[1]
 
@@ -184,10 +158,7 @@ def startup_event():
 
     print("FAISS ready")
 
-
-# =====================================================
 # REQUEST MODELS
-# =====================================================
 
 class Message(BaseModel):
     role: str
@@ -197,10 +168,7 @@ class Message(BaseModel):
 class ChatRequest(BaseModel):
     messages: List[Message]
 
-
-# =====================================================
 # HOME ENDPOINT
-# =====================================================
 
 @app.get("/")
 def home():
@@ -217,10 +185,7 @@ def health():
         "status": "ok"
     }
 
-
-# =====================================================
 # RECOMMENDATION FUNCTION
-# =====================================================
 
 def get_recommendations(query, top_k=5):
 
@@ -251,10 +216,7 @@ def get_recommendations(query, top_k=5):
 
     return recommendations
 
-
-# =====================================================
 # CHAT ENDPOINT
-# =====================================================
 
 @app.post("/chat")
 def chat(request: ChatRequest):
@@ -276,10 +238,7 @@ def chat(request: ChatRequest):
         "end_of_conversation": True
     }
 
-
-# =====================================================
 # MAIN
-# =====================================================
 
 if __name__ == "__main__":
 
