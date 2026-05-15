@@ -1,11 +1,8 @@
 import requests
 from bs4 import BeautifulSoup
-import pandas as pd
 import json
 import numpy as np
 import faiss
-import nest_asyncio
-import asyncio
 
 from sentence_transformers import SentenceTransformer
 
@@ -13,22 +10,33 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from typing import List
 
-from pyngrok import ngrok
 import uvicorn
-from uvicorn import Config, Server # Import Config and Server
+
+
+# =========================================================
+# FASTAPI APP
+# =========================================================
+
+app = FastAPI(
+    title="SHL Assessment Recommendation API",
+    description="AI-powered SHL assessment recommendation system",
+    version="1.0.0"
+)
 
 
 # =========================================================
 # SCRAPE SHL CATALOG
 # =========================================================
 
-url = "https://www.shl.com/solutions/products/product-catalog/"
+CATALOG_URL = "https://www.shl.com/solutions/products/product-catalog/"
 
 headers = {
     "User-Agent": "Mozilla/5.0"
 }
 
-response = requests.get(url, headers=headers)
+print("Scraping SHL catalog...")
+
+response = requests.get(CATALOG_URL, headers=headers)
 
 soup = BeautifulSoup(response.text, "lxml")
 
@@ -63,7 +71,7 @@ for url in assessment_links:
 
     try:
 
-        response = requests.get(url, headers=headers)
+        response = requests.get(url, headers=headers, timeout=20)
 
         soup = BeautifulSoup(response.text, "lxml")
 
@@ -87,13 +95,16 @@ for url in assessment_links:
             "description": description
         }
 
-        all_assessments.append(assessment)
+        if assessment["name"] != "":
 
-        print("Done:", assessment["name"])
+            all_assessments.append(assessment)
+
+            print("Done:", assessment["name"])
 
     except Exception as e:
 
         print("Error:", url)
+        print(str(e))
 
 print("Total assessments:", len(all_assessments))
 
@@ -111,6 +122,8 @@ print("catalog.json saved")
 # =========================================================
 # LOAD EMBEDDING MODEL
 # =========================================================
+
+print("Loading embedding model...")
 
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
@@ -134,6 +147,8 @@ for item in all_assessments:
 # CREATE EMBEDDINGS
 # =========================================================
 
+print("Creating embeddings...")
+
 embeddings = model.encode(documents)
 
 print("Embeddings created")
@@ -153,13 +168,6 @@ print("FAISS index created")
 
 
 # =========================================================
-# FASTAPI APP
-# =========================================================
-
-app = FastAPI()
-
-
-# =========================================================
 # REQUEST SCHEMA
 # =========================================================
 
@@ -175,6 +183,14 @@ class ChatRequest(BaseModel):
 # =========================================================
 # HEALTH ENDPOINT
 # =========================================================
+
+@app.get("/")
+def home():
+
+    return {
+        "message": "SHL Recommendation API Running"
+    }
+
 
 @app.get("/health")
 def health():
@@ -298,17 +314,11 @@ def chat(request: ChatRequest):
 
     messages = request.messages
 
-
-    # =====================================================
-    # FULL CONVERSATION HISTORY
-    # =====================================================
-
     conversation_text = ""
 
     for message in messages:
 
         conversation_text += message.content + " "
-
 
     # =====================================================
     # OFF TOPIC REFUSAL
@@ -332,7 +342,6 @@ def chat(request: ChatRequest):
                 "end_of_conversation": False
             }
 
-
     # =====================================================
     # COMPARISON SUPPORT
     # =====================================================
@@ -345,7 +354,6 @@ def chat(request: ChatRequest):
 
         return comparison_result
 
-
     # =====================================================
     # CLARIFICATION
     # =====================================================
@@ -357,7 +365,6 @@ def chat(request: ChatRequest):
             "recommendations": [],
             "end_of_conversation": False
         }
-
 
     # =====================================================
     # PERSONALITY TEST SUPPORT
@@ -377,7 +384,6 @@ def chat(request: ChatRequest):
 
             personality_needed = True
 
-
     # =====================================================
     # GET RECOMMENDATIONS
     # =====================================================
@@ -386,7 +392,6 @@ def chat(request: ChatRequest):
         conversation_text,
         top_k=10
     )
-
 
     # =====================================================
     # FILTER EMPTY ITEMS
@@ -400,12 +405,10 @@ def chat(request: ChatRequest):
 
             cleaned.append(item)
 
-
     recommendations = cleaned[:10]
 
-
     # =====================================================
-    # REPLY TEXT
+    # REPLY
     # =====================================================
 
     reply = "Here are recommended SHL assessments."
@@ -413,7 +416,6 @@ def chat(request: ChatRequest):
     if personality_needed:
 
         reply += " Personality-related assessments were also considered."
-
 
     # =====================================================
     # FINAL RESPONSE
@@ -427,45 +429,13 @@ def chat(request: ChatRequest):
 
 
 # =========================================================
-# ENABLE COLAB FASTAPI
-# =========================================================
-
-nest_asyncio.apply()
-
-
-# =========================================================
-# ADD NGROK TOKEN
-# =========================================================
-
-ngrok.set_auth_token("36mSHpSl4DWk4VZO6zTudKO3Piz_2ReYvKNYAz8zPKgUJRMxH")
-
-
-# =========================================================
-# START NGROK
-# =========================================================
-
-public_url = ngrok.connect(8000)
-
-print("\n")
-print("===================================")
-print("PUBLIC URL:")
-print(public_url)
-print("===================================")
-print("\n")
-
-
-# =========================================================
 # START SERVER
 # =========================================================
 
-# Create Uvicorn Config
-config = Config(app, host="0.0.0.0", port=8000, loop="asyncio")
+if __name__ == "__main__":
 
-# Create Uvicorn Server
-server = Server(config=config)
-
-# Run the server as an asyncio task
-# This allows it to run in the background without blocking the Colab kernel
-# and avoids the RuntimeError from asyncio.run() being called directly.
-asyncio.create_task(server.serve())
-    
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=10000
+    )
