@@ -4,7 +4,6 @@ requests
 beautifulsoup4
 numpy
 faiss-cpu
-sentence-transformers
-torch
+scikit-learn
 lxml
 pydantic
