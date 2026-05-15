@@ -2,7 +2,7 @@
 
 ## Overview
 
-This project is an AI-powered SHL Assessment Recommendation API built using FastAPI.
+This project is an SHL Assessment Recommendation API built using FastAPI.
 
 The system scrapes SHL assessment catalog data, processes assessment descriptions, and recommends relevant assessments based on user hiring requirements or skill needs.
 
