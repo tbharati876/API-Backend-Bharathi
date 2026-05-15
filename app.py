@@ -1,11 +1,10 @@
 import os
 import requests
-import json
 import numpy as np
 import faiss
 
 from bs4 import BeautifulSoup
-from sentence_transformers import SentenceTransformer
+from sklearn.feature_extraction.text import TfidfVectorizer
 
 from fastapi import FastAPI
 from pydantic import BaseModel
@@ -14,8 +13,13 @@ from typing import List
 import uvicorn
 
 
+
+# FASTAPI APP
+
+
 app = FastAPI(
-    title="SHL Assessment Recommendation API"
+    title="SHL Assessment Recommendation API",
+    version="1.0.0"
 )
 
 
@@ -23,23 +27,23 @@ app = FastAPI(
 # GLOBAL VARIABLES
 # =====================================================
 
-model = None
-index = None
 all_assessments = []
+vectorizer = None
+index = None
 
 
 # =====================================================
-# STARTUP EVENT
+# STARTUP
 # =====================================================
 
 @app.on_event("startup")
 def startup_event():
 
-    global model
-    global index
     global all_assessments
+    global vectorizer
+    global index
 
-    print("Starting initialization...")
+    print("Initializing app...")
 
     url = "https://www.shl.com/solutions/products/product-catalog/"
 
@@ -55,25 +59,54 @@ def startup_event():
 
     assessment_links = []
 
+    # =====================================================
+    # COLLECT ONLY VALID ASSESSMENT LINKS
+    # =====================================================
+
     for link in links:
 
         href = link.get("href")
 
-        if href and "/products/" in href:
+        if href:
 
-            if href.startswith("/"):
-                full_url = "https://www.shl.com" + href
-            else:
-                full_url = href
+            # remove pagination links
+            if "product-catalog/?start=" in href:
+                continue
 
-            if full_url not in assessment_links:
-                assessment_links.append(full_url)
+            # keep only product pages
+            if "/products/" in href:
 
-    for item_url in assessment_links[:50]:
+                if href.startswith("/"):
+                    full_url = "https://www.shl.com" + href
+                else:
+                    full_url = href
+
+                # skip product catalog pages
+                if "product-catalog" in full_url:
+                    continue
+
+                if full_url not in assessment_links:
+                    assessment_links.append(full_url)
+
+    print("Valid links found:", len(assessment_links))
+
+    # =====================================================
+    # SCRAPE VALID ASSESSMENTS
+    # =====================================================
+
+    bad_titles = [
+        "Find assessments that best meet your needs."
+    ]
+
+    for item_url in assessment_links[:40]:
 
         try:
 
-            r = requests.get(item_url, headers=headers, timeout=10)
+            r = requests.get(
+                item_url,
+                headers=headers,
+                timeout=10
+            )
 
             s = BeautifulSoup(r.text, "lxml")
 
@@ -97,15 +130,29 @@ def startup_event():
                 "description": description
             }
 
-            if assessment["name"] != "":
+            # =================================================
+            # FILTER BAD ENTRIES
+            # =================================================
+
+            if (
+                assessment["name"] != ""
+                and assessment["description"] != ""
+                and assessment["name"] not in bad_titles
+            ):
+
                 all_assessments.append(assessment)
 
-        except:
-            pass
+                print("Loaded:", assessment["name"])
 
-    print("Assessments loaded:", len(all_assessments))
+        except Exception as e:
 
-    model = SentenceTransformer("all-MiniLM-L6-v2")
+            print("Error:", item_url)
+
+    print("Final assessments:", len(all_assessments))
+
+    # =====================================================
+    # TF-IDF VECTORIZER
+    # =====================================================
 
     documents = []
 
@@ -115,19 +162,31 @@ def startup_event():
 
         documents.append(text)
 
-    embeddings = model.encode(documents)
+    vectorizer = TfidfVectorizer()
+
+    embeddings = vectorizer.fit_transform(
+        documents
+    ).toarray()
+
+    embeddings = np.array(
+        embeddings
+    ).astype("float32")
+
+    # =====================================================
+    # FAISS INDEX
+    # =====================================================
 
     dimension = embeddings.shape[1]
 
     index = faiss.IndexFlatL2(dimension)
 
-    index.add(np.array(embeddings))
+    index.add(embeddings)
 
     print("FAISS ready")
 
 
 # =====================================================
-# REQUEST SCHEMA
+# REQUEST MODELS
 # =====================================================
 
 class Message(BaseModel):
@@ -140,14 +199,14 @@ class ChatRequest(BaseModel):
 
 
 # =====================================================
-# HOME
+# HOME ENDPOINT
 # =====================================================
 
 @app.get("/")
 def home():
 
     return {
-        "message": "API Running"
+        "message": "SHL Recommendation API Running"
     }
 
 
@@ -160,15 +219,21 @@ def health():
 
 
 # =====================================================
-# RECOMMENDATIONS
+# RECOMMENDATION FUNCTION
 # =====================================================
 
 def get_recommendations(query, top_k=5):
 
-    query_embedding = model.encode([query])
+    query_embedding = vectorizer.transform(
+        [query]
+    ).toarray()
+
+    query_embedding = np.array(
+        query_embedding
+    ).astype("float32")
 
     distances, indices = index.search(
-        np.array(query_embedding),
+        query_embedding,
         top_k
     )
 
@@ -180,14 +245,15 @@ def get_recommendations(query, top_k=5):
 
         recommendations.append({
             "name": item["name"],
-            "url": item["url"]
+            "url": item["url"],
+            "test_type": "Assessment"
         })
 
     return recommendations
 
 
 # =====================================================
-# CHAT
+# CHAT ENDPOINT
 # =====================================================
 
 @app.post("/chat")
@@ -205,8 +271,9 @@ def chat(request: ChatRequest):
     )
 
     return {
-        "reply": "Recommended assessments",
-        "recommendations": recommendations
+        "reply": "Recommended SHL assessments.",
+        "recommendations": recommendations,
+        "end_of_conversation": True
     }
 
 
@@ -216,7 +283,7 @@ def chat(request: ChatRequest):
 
 if __name__ == "__main__":
 
-    port = int(os.environ.get("PORT", 10000))
+    port = int(os.environ.get("PORT", 8080))
 
     uvicorn.run(
         app,
