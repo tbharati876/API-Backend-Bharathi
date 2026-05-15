@@ -1,9 +1,10 @@
+import os
 import requests
-from bs4 import BeautifulSoup
 import json
 import numpy as np
 import faiss
 
+from bs4 import BeautifulSoup
 from sentence_transformers import SentenceTransformer
 
 from fastapi import FastAPI
@@ -13,163 +14,121 @@ from typing import List
 import uvicorn
 
 
-# =========================================================
-# FASTAPI APP
-# =========================================================
-
 app = FastAPI(
-    title="SHL Assessment Recommendation API",
-    description="AI-powered SHL assessment recommendation system",
-    version="1.0.0"
+    title="SHL Assessment Recommendation API"
 )
 
 
-# =========================================================
-# SCRAPE SHL CATALOG
-# =========================================================
+# =====================================================
+# GLOBAL VARIABLES
+# =====================================================
 
-CATALOG_URL = "https://www.shl.com/solutions/products/product-catalog/"
-
-headers = {
-    "User-Agent": "Mozilla/5.0"
-}
-
-print("Scraping SHL catalog...")
-
-response = requests.get(CATALOG_URL, headers=headers)
-
-soup = BeautifulSoup(response.text, "lxml")
-
-links = soup.find_all("a")
-
-assessment_links = []
-
-for link in links:
-
-    href = link.get("href")
-
-    if href and "/products/" in href:
-
-        if href.startswith("/"):
-            full_url = "https://www.shl.com" + href
-        else:
-            full_url = href
-
-        if full_url not in assessment_links:
-            assessment_links.append(full_url)
-
-print("Assessment links found:", len(assessment_links))
-
-
-# =========================================================
-# SCRAPE ALL ASSESSMENTS
-# =========================================================
-
+model = None
+index = None
 all_assessments = []
 
-for url in assessment_links:
 
-    try:
+# =====================================================
+# STARTUP EVENT
+# =====================================================
 
-        response = requests.get(url, headers=headers, timeout=20)
+@app.on_event("startup")
+def startup_event():
 
-        soup = BeautifulSoup(response.text, "lxml")
+    global model
+    global index
+    global all_assessments
 
-        title = soup.find("h1")
+    print("Starting initialization...")
 
-        paragraphs = soup.find_all("p")
+    url = "https://www.shl.com/solutions/products/product-catalog/"
 
-        description = ""
+    headers = {
+        "User-Agent": "Mozilla/5.0"
+    }
 
-        for p in paragraphs:
+    response = requests.get(url, headers=headers)
 
-            text = p.text.strip()
+    soup = BeautifulSoup(response.text, "lxml")
 
-            if len(text) > 50:
-                description = text
-                break
+    links = soup.find_all("a")
 
-        assessment = {
-            "name": title.text.strip() if title else "",
-            "url": url,
-            "description": description
-        }
+    assessment_links = []
 
-        if assessment["name"] != "":
+    for link in links:
 
-            all_assessments.append(assessment)
+        href = link.get("href")
 
-            print("Done:", assessment["name"])
+        if href and "/products/" in href:
 
-    except Exception as e:
+            if href.startswith("/"):
+                full_url = "https://www.shl.com" + href
+            else:
+                full_url = href
 
-        print("Error:", url)
-        print(str(e))
+            if full_url not in assessment_links:
+                assessment_links.append(full_url)
 
-print("Total assessments:", len(all_assessments))
+    for item_url in assessment_links[:50]:
 
+        try:
 
-# =========================================================
-# SAVE DATASET
-# =========================================================
+            r = requests.get(item_url, headers=headers, timeout=10)
 
-with open("catalog.json", "w") as f:
-    json.dump(all_assessments, f, indent=4)
+            s = BeautifulSoup(r.text, "lxml")
 
-print("catalog.json saved")
+            title = s.find("h1")
 
+            paragraphs = s.find_all("p")
 
-# =========================================================
-# LOAD EMBEDDING MODEL
-# =========================================================
+            description = ""
 
-print("Loading embedding model...")
+            for p in paragraphs:
 
-model = SentenceTransformer("all-MiniLM-L6-v2")
+                text = p.text.strip()
 
-print("Embedding model loaded")
+                if len(text) > 50:
+                    description = text
+                    break
 
+            assessment = {
+                "name": title.text.strip() if title else "",
+                "url": item_url,
+                "description": description
+            }
 
-# =========================================================
-# PREPARE DOCUMENTS
-# =========================================================
+            if assessment["name"] != "":
+                all_assessments.append(assessment)
 
-documents = []
+        except:
+            pass
 
-for item in all_assessments:
+    print("Assessments loaded:", len(all_assessments))
 
-    text = item["name"] + " " + item["description"]
+    model = SentenceTransformer("all-MiniLM-L6-v2")
 
-    documents.append(text)
+    documents = []
 
+    for item in all_assessments:
 
-# =========================================================
-# CREATE EMBEDDINGS
-# =========================================================
+        text = item["name"] + " " + item["description"]
 
-print("Creating embeddings...")
+        documents.append(text)
 
-embeddings = model.encode(documents)
+    embeddings = model.encode(documents)
 
-print("Embeddings created")
+    dimension = embeddings.shape[1]
 
+    index = faiss.IndexFlatL2(dimension)
 
-# =========================================================
-# CREATE FAISS INDEX
-# =========================================================
+    index.add(np.array(embeddings))
 
-dimension = embeddings.shape[1]
-
-index = faiss.IndexFlatL2(dimension)
-
-index.add(np.array(embeddings))
-
-print("FAISS index created")
+    print("FAISS ready")
 
 
-# =========================================================
+# =====================================================
 # REQUEST SCHEMA
-# =========================================================
+# =====================================================
 
 class Message(BaseModel):
     role: str
@@ -180,15 +139,15 @@ class ChatRequest(BaseModel):
     messages: List[Message]
 
 
-# =========================================================
-# HEALTH ENDPOINT
-# =========================================================
+# =====================================================
+# HOME
+# =====================================================
 
 @app.get("/")
 def home():
 
     return {
-        "message": "SHL Recommendation API Running"
+        "message": "API Running"
     }
 
 
@@ -200,13 +159,13 @@ def health():
     }
 
 
-# =========================================================
-# RECOMMENDATION FUNCTION
-# =========================================================
+# =====================================================
+# RECOMMENDATIONS
+# =====================================================
 
-def get_recommendations(user_query, top_k=5):
+def get_recommendations(query, top_k=5):
 
-    query_embedding = model.encode([user_query])
+    query_embedding = model.encode([query])
 
     distances, indices = index.search(
         np.array(query_embedding),
@@ -221,218 +180,39 @@ def get_recommendations(user_query, top_k=5):
 
         recommendations.append({
             "name": item["name"],
-            "url": item["url"],
-            "test_type": "Assessment"
+            "url": item["url"]
         })
 
     return recommendations
 
 
-# =========================================================
-# VAGUE QUERY DETECTION
-# =========================================================
-
-def is_vague_query(text):
-
-    vague_words = [
-        "assessment",
-        "test",
-        "hiring",
-        "job",
-        "candidate"
-    ]
-
-    text = text.lower()
-
-    if len(text.split()) <= 3:
-        return True
-
-    for word in vague_words:
-
-        if text.strip() == word:
-            return True
-
-    return False
-
-
-# =========================================================
-# COMPARISON FUNCTION
-# =========================================================
-
-def compare_assessments(conversation_text):
-
-    comparison_words = [
-        "difference",
-        "compare",
-        "vs",
-        "versus"
-    ]
-
-    found = False
-
-    for word in comparison_words:
-
-        if word in conversation_text.lower():
-            found = True
-
-    if not found:
-        return None
-
-    matched = []
-
-    for item in all_assessments:
-
-        if item["name"].lower() in conversation_text.lower():
-
-            matched.append(item)
-
-    if len(matched) < 2:
-        return None
-
-    reply = ""
-
-    for item in matched[:2]:
-
-        reply += (
-            f"{item['name']}: "
-            f"{item['description']}\n\n"
-        )
-
-    return {
-        "reply": reply,
-        "recommendations": [],
-        "end_of_conversation": False
-    }
-
-
-# =========================================================
-# CHAT ENDPOINT
-# =========================================================
+# =====================================================
+# CHAT
+# =====================================================
 
 @app.post("/chat")
 def chat(request: ChatRequest):
 
-    messages = request.messages
+    conversation = ""
 
-    conversation_text = ""
+    for msg in request.messages:
 
-    for message in messages:
-
-        conversation_text += message.content + " "
-
-    # =====================================================
-    # OFF TOPIC REFUSAL
-    # =====================================================
-
-    off_topic_words = [
-        "law",
-        "legal",
-        "salary",
-        "politics",
-        "weather"
-    ]
-
-    for word in off_topic_words:
-
-        if word in conversation_text.lower():
-
-            return {
-                "reply": "I can only help with SHL assessment recommendations.",
-                "recommendations": [],
-                "end_of_conversation": False
-            }
-
-    # =====================================================
-    # COMPARISON SUPPORT
-    # =====================================================
-
-    comparison_result = compare_assessments(
-        conversation_text
-    )
-
-    if comparison_result:
-
-        return comparison_result
-
-    # =====================================================
-    # CLARIFICATION
-    # =====================================================
-
-    if is_vague_query(conversation_text):
-
-        return {
-            "reply": "Could you specify the role, skills, seniority level, or assessment needs?",
-            "recommendations": [],
-            "end_of_conversation": False
-        }
-
-    # =====================================================
-    # PERSONALITY TEST SUPPORT
-    # =====================================================
-
-    personality_words = [
-        "personality",
-        "behavior",
-        "leadership"
-    ]
-
-    personality_needed = False
-
-    for word in personality_words:
-
-        if word in conversation_text.lower():
-
-            personality_needed = True
-
-    # =====================================================
-    # GET RECOMMENDATIONS
-    # =====================================================
+        conversation += msg.content + " "
 
     recommendations = get_recommendations(
-        conversation_text,
-        top_k=10
+        conversation,
+        top_k=5
     )
 
-    # =====================================================
-    # FILTER EMPTY ITEMS
-    # =====================================================
-
-    cleaned = []
-
-    for item in recommendations:
-
-        if item["name"] != "":
-
-            cleaned.append(item)
-
-    recommendations = cleaned[:10]
-
-    # =====================================================
-    # REPLY
-    # =====================================================
-
-    reply = "Here are recommended SHL assessments."
-
-    if personality_needed:
-
-        reply += " Personality-related assessments were also considered."
-
-    # =====================================================
-    # FINAL RESPONSE
-    # =====================================================
-
     return {
-        "reply": reply,
-        "recommendations": recommendations,
-        "end_of_conversation": True
+        "reply": "Recommended assessments",
+        "recommendations": recommendations
     }
 
 
-# =========================================================
-# START SERVER
-# =========================================================
-
-import os
+# =====================================================
+# MAIN
+# =====================================================
 
 if __name__ == "__main__":
 
