@@ -8,4 +8,3 @@ sentence-transformers
 torch
 lxml
 pydantic
-python-multipart
