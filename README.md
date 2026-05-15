@@ -35,42 +35,44 @@ The application is deployed publicly and provides REST API endpoints with Swagge
 
 ---
 
-Installation
+## Installation
 
 Clone the repository:
 
 git clone <github-repo-url>
 cd <repo-name>
 
-Install dependencies:
+## Install dependencies:
 
 pip install -r requirements.txt
 
-Run locally:
+## Run locally:
 
 python app.py
 
-API Endpoints
-Home Endpoint
+## API Endpoints
+
+- Home Endpoint
 GET /
 
-Response:
+- Response:
 
 {
   "message": "SHL Recommendation API Running"
 }
-Health Check
+
+- Health Check
 GET /health
 
-Response:
+- Response:
 
 {
   "status": "ok"
 }
-Chat Recommendation Endpoint
+- Chat Recommendation Endpoint
 POST /chat
 
-Request Body:
+- Request Body:
 
 {
   "messages": [
@@ -81,7 +83,7 @@ Request Body:
   ]
 }
 
-Example Response:
+- Example Response:
 
 {
   "reply": "Recommended SHL assessments.",
@@ -94,7 +96,8 @@ Example Response:
   ],
   "end_of_conversation": true
 }
-Deployment
+
+## Deployment
 
 The application is deployed using Railway.
 
