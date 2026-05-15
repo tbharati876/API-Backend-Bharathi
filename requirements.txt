@@ -2,9 +2,10 @@ fastapi
 uvicorn
 requests
 beautifulsoup4
-lxml
-sentence-transformers
-faiss-cpu
 numpy
+faiss-cpu
+sentence-transformers
+torch
+lxml
 pydantic
-pandas
+python-multipart
