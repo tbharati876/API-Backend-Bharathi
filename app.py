@@ -128,7 +128,7 @@ def startup_event():
 
     print("Final assessments:", len(all_assessments))
 
-    # TF-IDF VECTORIZER
+    # TF IDF VECTORIZER
 
     documents = []
 
